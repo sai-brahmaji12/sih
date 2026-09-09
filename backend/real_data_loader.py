@@ -6,104 +6,77 @@ import pandas as pd
 import geopandas as gpd
 from shapely.geometry import Point
 
-
-# ---------------------------------------------------------
-# Indian state approximate centroids
-# Used for assigning a region to each hotspot
-# ---------------------------------------------------------
-
-STATE_CENTROIDS = {
-    "Andhra Pradesh": (15.9129, 79.7400),
-    "Arunachal Pradesh": (28.2180, 94.7278),
-    "Assam": (26.2006, 92.9376),
-    "Bihar": (25.0961, 85.3131),
-    "Chhattisgarh": (21.2787, 81.8661),
-    "Goa": (15.2993, 74.1240),
-    "Gujarat": (22.2587, 71.1924),
-    "Haryana": (29.0588, 76.0856),
-    "Himachal Pradesh": (31.1048, 77.1734),
-    "Jharkhand": (23.6102, 85.2799),
-    "Karnataka": (15.3173, 75.7139),
-    "Kerala": (10.8505, 76.2711),
-    "Madhya Pradesh": (22.9734, 78.6569),
-    "Maharashtra": (19.7515, 75.7139),
-    "Manipur": (24.6637, 93.9063),
-    "Meghalaya": (25.4670, 91.3662),
-    "Mizoram": (23.1645, 92.9376),
-    "Nagaland": (26.1584, 94.5624),
-    "Odisha": (20.9517, 85.0985),
-    "Punjab": (31.1471, 75.3412),
-    "Rajasthan": (27.0238, 74.2179),
-    "Sikkim": (27.5330, 88.5122),
-    "Tamil Nadu": (11.1271, 78.6569),
-    "Telangana": (18.1124, 79.0193),
-    "Tripura": (23.9408, 91.9882),
-    "Uttar Pradesh": (26.8467, 80.9462),
-    "Uttarakhand": (30.0668, 79.0193),
-    "West Bengal": (22.9868, 87.8550),
-}
-
-
-# ---------------------------------------------------------
-# Confidence conversion
-# ---------------------------------------------------------
-
 CONFIDENCE_MAP = {
-    "l": 35,
-    "n": 65,
+    "l": 25,
+    "n": 60,
     "h": 90,
-    "low": 35,
-    "nominal": 65,
+    "low": 25,
+    "nominal": 60,
     "high": 90,
 }
 
+STATE_CENTROIDS = {
+    "Andhra Pradesh": (15.9129, 79.7400),
+    "Telangana": (18.1124, 79.0193),
+    "Tamil Nadu": (11.1271, 78.6569),
+    "Karnataka": (15.3173, 75.7139),
+    "Kerala": (10.8505, 76.2711),
+    "Maharashtra": (19.7515, 75.7139),
+    "Odisha": (20.9517, 85.0985),
+    "West Bengal": (22.9868, 87.8550),
+    "Chhattisgarh": (21.2787, 81.8661),
+    "Madhya Pradesh": (22.9734, 78.6569),
+    "Gujarat": (22.2587, 71.1924),
+    "Rajasthan": (27.0238, 74.2179),
+    "Uttar Pradesh": (26.8467, 80.9462),
+    "Bihar": (25.0961, 85.3131),
+    "Jharkhand": (23.6102, 85.2799),
+    "Punjab": (31.1471, 75.3412),
+    "Haryana": (29.0588, 76.0856),
+    "Assam": (26.2006, 92.9376),
+    "Uttarakhand": (30.0668, 79.0193),
+    "Himachal Pradesh": (31.1048, 77.1734),
+    "Jammu and Kashmir": (33.7782, 76.5762),
+}
 
-# ---------------------------------------------------------
-# Find nearest state/region
-# ---------------------------------------------------------
 
 def _nearest_region(
-    latitudes: np.ndarray,
-    longitudes: np.ndarray,
-) -> list:
-
-    states = list(STATE_CENTROIDS.keys())
+    lat: np.ndarray,
+    lon: np.ndarray,
+) -> np.ndarray:
+    names = list(STATE_CENTROIDS.keys())
 
     centroids = np.array(
-        [STATE_CENTROIDS[state] for state in states],
+        [STATE_CENTROIDS[name] for name in names],
         dtype=float,
     )
 
-    result = []
+    lat_r = np.radians(lat)[:, None]
+    lon_r = np.radians(lon)[:, None]
 
-    for lat, lon in zip(latitudes, longitudes):
+    centroid_lat = np.radians(centroids[:, 0])[None, :]
+    centroid_lon = np.radians(centroids[:, 1])[None, :]
 
-        # Simple squared-distance calculation.
-        # Good enough for approximate region assignment.
-        distances = (
-            (centroids[:, 0] - lat) ** 2
-            + (centroids[:, 1] - lon) ** 2
-        )
+    dlat = centroid_lat - lat_r
+    dlon = centroid_lon - lon_r
 
-        nearest_index = int(np.argmin(distances))
+    a = (
+        np.sin(dlat / 2) ** 2
+        + np.cos(lat_r)
+        * np.cos(centroid_lat)
+        * np.sin(dlon / 2) ** 2
+    )
 
-        result.append(states[nearest_index])
+    dist = 2 * 6371.0 * np.arcsin(
+        np.sqrt(np.clip(a, 0, 1))
+    )
 
-    return result
+    nearest = dist.argmin(axis=1)
 
+    return np.array(names)[nearest]
 
-# ---------------------------------------------------------
-# Keep only points falling on Indian land
-# ---------------------------------------------------------
 
 def keep_india_land(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Remove VIIRS hotspots that fall in the sea.
-
-    Uses Natural Earth country boundaries and keeps
-    only points located inside India's land polygon.
-    """
-
     if df.empty:
         return df
 
@@ -114,74 +87,51 @@ def keep_india_land(df: pd.DataFrame) -> pd.DataFrame:
     )
 
     try:
-
         world = gpd.read_file(world_url)
 
-        # Select India
         india = world[
             world["ADMIN"].astype(str).str.strip().str.lower()
             == "india"
         ]
 
         if india.empty:
-            print("Warning: India boundary not found.")
             return df
 
-        # Create Point geometries.
-        # IMPORTANT:
-        # Shapely uses longitude first, latitude second.
-        points = [
+        geometry = [
             Point(float(lon), float(lat))
             for lat, lon in zip(
                 df["latitude"],
-                df["longitude"]
+                df["longitude"],
             )
         ]
 
-        points_gdf = gpd.GeoDataFrame(
+        points = gpd.GeoDataFrame(
             df.copy(),
-            geometry=points,
+            geometry=geometry,
             crs="EPSG:4326",
         )
 
-        # Combine India's geometry
         try:
             india_geometry = india.geometry.union_all()
         except AttributeError:
-            # Compatibility with older GeoPandas
             india_geometry = india.geometry.unary_union
 
-        # Keep only points inside Indian land
-        mask = points_gdf.geometry.within(india_geometry)
+        mask = points.geometry.intersects(india_geometry)
 
-        filtered = points_gdf.loc[
+        result = points.loc[
             mask
         ].drop(
             columns=["geometry"]
         )
 
-        print(
-            f"Land filter: {len(df)} → "
-            f"{len(filtered)} hotspots"
-        )
-
-        return pd.DataFrame(filtered)
+        return pd.DataFrame(result)
 
     except Exception as exc:
-
         print(
-            "Warning: India land filtering failed:"
-            f" {exc}"
+            f"[real_data_loader] Land filter failed: {exc}"
         )
-
-        # Do not crash the whole application if the
-        # external boundary file cannot be downloaded.
         return df
 
-
-# ---------------------------------------------------------
-# Load VIIRS CSV
-# ---------------------------------------------------------
 
 def load_viirs_csv(
     path: str,
@@ -196,19 +146,7 @@ def load_viirs_csv(
             f"VIIRS CSV not found: {path}"
         )
 
-    # -----------------------------------------------------
-    # Read CSV
-    # -----------------------------------------------------
-
     df = pd.read_csv(path)
-
-    print(
-        f"Loaded {len(df)} rows from {path.name}"
-    )
-
-    # -----------------------------------------------------
-    # Required columns
-    # -----------------------------------------------------
 
     required = {
         "latitude",
@@ -224,13 +162,8 @@ def load_viirs_csv(
 
     if missing:
         raise ValueError(
-            "VIIRS CSV is missing expected columns: "
-            f"{sorted(missing)}"
+            f"VIIRS CSV is missing expected columns: {sorted(missing)}"
         )
-
-    # -----------------------------------------------------
-    # Convert coordinates to numeric
-    # -----------------------------------------------------
 
     df["latitude"] = pd.to_numeric(
         df["latitude"],
@@ -242,40 +175,6 @@ def load_viirs_csv(
         errors="coerce",
     )
 
-    # Remove invalid coordinates
-    df = df.dropna(
-        subset=[
-            "latitude",
-            "longitude",
-        ]
-    ).copy()
-
-    # -----------------------------------------------------
-    # Basic India bounding box
-    #
-    # This removes obviously impossible points before
-    # performing the more expensive land check.
-    # -----------------------------------------------------
-
-    df = df[
-        df["latitude"].between(6.0, 37.0)
-        & df["longitude"].between(68.0, 98.0)
-    ].copy()
-
-    print(
-        f"After India bounding box: {len(df)} hotspots"
-    )
-
-    # -----------------------------------------------------
-    # Remove sea/offshore points
-    # -----------------------------------------------------
-
-    df = keep_india_land(df)
-
-    # -----------------------------------------------------
-    # Convert important numerical columns
-    # -----------------------------------------------------
-
     df["frp"] = pd.to_numeric(
         df["frp"],
         errors="coerce",
@@ -286,107 +185,71 @@ def load_viirs_csv(
         errors="coerce",
     )
 
-    # Remove rows with invalid fire measurements
     df = df.dropna(
         subset=[
+            "latitude",
+            "longitude",
             "frp",
             "bright_ti4",
         ]
     ).copy()
 
-    # -----------------------------------------------------
-    # Sample data if requested
-    # -----------------------------------------------------
+    df = df[
+        df["latitude"].between(6.0, 37.5)
+        & df["longitude"].between(68.0, 98.0)
+    ].copy()
+
+    df = keep_india_land(df)
+
+    df = df[
+        df["frp"].between(0, 200)
+        & df["bright_ti4"].between(250, 450)
+    ].copy()
 
     if (
         sample_size is not None
         and len(df) > sample_size
     ):
-
         df = df.sample(
             n=sample_size,
             random_state=seed,
-        ).reset_index(drop=True)
+        )
 
-    else:
-
-        df = df.reset_index(drop=True)
-
-    # -----------------------------------------------------
-    # Convert acquisition date
-    # -----------------------------------------------------
+    df = df.reset_index(drop=True)
 
     df["acq_date"] = pd.to_datetime(
         df["acq_date"],
         errors="coerce",
     )
 
-    # -----------------------------------------------------
-    # Create output dataframe
-    # -----------------------------------------------------
+    df["confidence"] = (
+        df["confidence"]
+        .astype(str)
+        .str.lower()
+        .map(CONFIDENCE_MAP)
+        .fillna(50)
+        .astype(int)
+    )
 
     out = pd.DataFrame(
         {
             "hotspot_id": [
                 f"HS_{i:06d}"
-                for i in range(
-                    1,
-                    len(df) + 1,
-                )
+                for i in range(1, len(df) + 1)
             ],
-
-            "latitude": df[
-                "latitude"
-            ].astype(float),
-
-            "longitude": df[
-                "longitude"
-            ].astype(float),
-
-            "acq_date": df[
-                "acq_date"
-            ],
-
-            "acq_daynight": df[
-                "daynight"
-            ],
-
-            "brightness_k": df[
-                "bright_ti4"
-            ].astype(float),
-
-            "frp_mw": df[
-                "frp"
-            ].astype(float),
-
-            "confidence": df[
-                "confidence"
-            ]
-            .astype(str)
-            .str.lower()
-            .map(CONFIDENCE_MAP)
-            .fillna(50)
-            .astype(int),
+            "latitude": df["latitude"].astype(float),
+            "longitude": df["longitude"].astype(float),
+            "acq_date": df["acq_date"],
+            "acq_daynight": df["daynight"].astype(str),
+            "brightness_k": df["bright_ti4"].astype(float),
+            "frp_mw": df["frp"].astype(float),
+            "confidence": df["confidence"].astype(int),
         }
     )
-
-    # -----------------------------------------------------
-    # Assign approximate region/state
-    # -----------------------------------------------------
 
     out["region"] = _nearest_region(
         out["latitude"].to_numpy(),
         out["longitude"].to_numpy(),
     )
 
-    # -----------------------------------------------------
-    # Final cleanup
-    # -----------------------------------------------------
-
-    out = out.reset_index(drop=True)
-
-    print(
-        f"Final VIIRS hotspots: {len(out)}"
-    )
-
-    return out
+    return out.reset_index(drop=True)
