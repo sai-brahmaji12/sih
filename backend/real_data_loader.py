@@ -13,10 +13,10 @@ Indian state capital, since the raw file has no admin-region column.
 
 from pathlib import Path
 from typing import Optional
-
 import numpy as np
 import pandas as pd
-
+import geopandas as gpd
+from shapely.geometry import Point
 # VIIRS confidence is categorical (low / nominal / high) -> numeric proxy
 CONFIDENCE_MAP = {"l": 25, "n": 60, "h": 90}
 
@@ -62,26 +62,51 @@ def _nearest_region(lat: np.ndarray, lon: np.ndarray) -> np.ndarray:
     return np.array(names)[nearest_idx]
 
 
+def keep_india_land(df):
+    """Keep only VIIRS points that fall on Indian land."""
+
+    world_url = (
+        "https://raw.githubusercontent.com/nvkelso/"
+        "natural-earth-vector/master/geojson/"
+        "ne_110m_admin_0_countries.geojson"
+    )
+
+    world = gpd.read_file(world_url)
+
+    india = world[world["ADMIN"] == "India"]
+
+    geometry = [
+        Point(lon, lat)
+        for lon, lat in zip(df["longitude"], df["latitude"])
+    ]
+
+    points = gpd.GeoDataFrame(
+        df.copy(),
+        geometry=geometry,
+        crs="EPSG:4326"
+    )
+
+    # Keep points that are actually inside India's boundary
+    points = points[points.geometry.within(india.geometry.union_all())]
+
+    return pd.DataFrame(points.drop(columns="geometry"))
+
 def load_viirs_csv(
     path: str,
     sample_size: Optional[int] = 8000,
     seed: int = 42,
 ) -> pd.DataFrame:
-    """
-    Reads a raw VIIRS FIRMS CSV and returns a dataframe shaped like the
-    mock generator's output: hotspot_id, latitude, longitude, acq_date,
-    acq_daynight, brightness_k, frp_mw, confidence, region.
+  
+   df = pd.read_csv(path)
 
-    `sample_size`: for interactive use, a random sample keeps map
-    rendering and training fast. Pass None to load every row (fine for
-    offline batch runs, slow for the live dashboard on ~500k+ row files).
-    """
-    df = pd.read_csv(path)
+# Basic India coordinate range
 df = df[
     df["latitude"].between(6.0, 37.0) &
     df["longitude"].between(68.0, 98.0)
 ].copy()
 
+# Remove points that are actually in the sea
+df = keep_india_land(df)
     required = {
         "latitude", "longitude", "acq_date", "daynight",
         "confidence", "frp", "bright_ti4",
