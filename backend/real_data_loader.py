@@ -77,6 +77,10 @@ def load_viirs_csv(
     offline batch runs, slow for the live dashboard on ~500k+ row files).
     """
     df = pd.read_csv(path)
+df = df[
+    df["latitude"].between(6.0, 37.0) &
+    df["longitude"].between(68.0, 98.0)
+].copy()
 
     required = {
         "latitude", "longitude", "acq_date", "daynight",
