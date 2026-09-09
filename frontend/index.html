@@ -121,7 +121,7 @@ button.rerun:disabled {
   grid-template-rows: auto 1fr;
   gap: 1px;
   background: var(--line);
-  height: calc(100vh - 61px);
+  height: calc(100vh - 68px);
 }
 
 .kpis {
@@ -246,7 +246,7 @@ button.rerun:disabled {
   background: #eef3fa;
 }
 
-/* Map overlay */
+
 .map-title {
   position: absolute;
   z-index: 1000;
@@ -418,7 +418,7 @@ tbody tr:hover {
   border-radius: 4px;
 }
 
-/* Leaflet styling */
+
 .leaflet-control-zoom a {
   background: #ffffff !important;
   color: var(--text) !important;
@@ -472,7 +472,7 @@ tbody tr:hover {
   box-shadow: 0 0 12px currentColor;
 }
 
-/* Responsive */
+
 @media (max-width: 1100px) {
   .layout {
     grid-template-columns: 250px 1fr;
@@ -523,7 +523,7 @@ tbody tr:hover {
 </style>
 
 <style>
-/* Royal-blue light dashboard refresh */
+
 body { line-height: 1.45; }
 header { min-height: 68px; padding: 13px 24px; box-shadow: 0 2px 12px rgba(25,55,110,.06); }
 .brand { gap: 11px; }
@@ -785,63 +785,31 @@ tbody tr:hover { background: #f1f5ff; }
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <script>
-
 const API = "/api";
 
-let map;
-let markersLayer;
+let map = null;
+let markersLayer = null;
 let allData = [];
 
 const riskColor = {
-  High: "#ff4d4d",
-  Medium: "#e8a13a",
-  Low: "#3ac6a8"
+  High: "#d9344a",
+  Medium: "#d98b16",
+  Low: "#159b7b"
 };
 
-
-/* =========================
-   MAP
-========================= */
-
-function initMap() {
-  map = L.map("map", {
-    zoomControl: true,
-    attributionControl: true,
-    preferCanvas: true
-  });
-
-  L.tileLayer(
-    "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-    {
-      maxZoom: 19,
-      attribution:
-        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-    }
-  ).addTo(map);
-
-  map.fitBounds([
-  [6.5, 68.0],
-  [35.5, 97.5]
-]);
-
-  markersLayer = L.layerGroup().addTo(map);
-
-  setTimeout(function () {
-    map.invalidateSize();
-  }, 500);
+function isValidCoordinate(lat, lon) {
+  return Number.isFinite(lat) &&
+         Number.isFinite(lon) &&
+         lat >= 6 &&
+         lat <= 37.5 &&
+         lon >= 68 &&
+         lon <= 98;
 }
 
-
-/* =========================
-   HELPERS
-========================= */
-
 function fmtTime(ts) {
-
   if (!ts) return "—";
-
-  const d = new Date(ts * 1000);
-
+  const d = new Date(Number(ts) * 1000);
+  if (Number.isNaN(d.getTime())) return "—";
   return d.toLocaleString([], {
     month: "short",
     day: "numeric",
@@ -850,13 +818,8 @@ function fmtTime(ts) {
   });
 }
 
-
 function escapeHtml(value) {
-
-  if (value === null || value === undefined) {
-    return "";
-  }
-
+  if (value === null || value === undefined) return "";
   return String(value)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -865,527 +828,398 @@ function escapeHtml(value) {
     .replace(/'/g, "&#039;");
 }
 
+function initMap() {
+  map = L.map("map", {
+    zoomControl: true,
+    attributionControl: true,
+    preferCanvas: true,
+    minZoom: 4,
+    maxZoom: 18
+  });
 
-/* =========================
-   SUMMARY
-========================= */
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+  }).addTo(map);
+
+  map.fitBounds([
+    [6, 68],
+    [37.5, 98]
+  ], {
+    padding: [20, 20]
+  });
+
+  markersLayer = L.layerGroup().addTo(map);
+
+  setTimeout(() => map.invalidateSize(), 300);
+}
+
+function updateKpis(summary) {
+  document.getElementById("data-source").textContent =
+    summary.source === "real" ? "VIIRS (real)" : "Unavailable";
+
+  document.getElementById("acc").textContent =
+    summary.accuracy !== null && summary.accuracy !== undefined
+      ? (Number(summary.accuracy) * 100).toFixed(1) + "%"
+      : "—";
+
+  document.getElementById("rec-count").textContent =
+    summary.n_records ?? "—";
+
+  document.getElementById("trained-at").textContent =
+    summary.trained_at ? "trained " + fmtTime(summary.trained_at) : "—";
+
+  document.getElementById("kpi-total").textContent =
+    summary.n_records ?? 0;
+
+  document.getElementById("kpi-high").textContent =
+    summary.risk_level_counts?.High ?? 0;
+
+  document.getElementById("kpi-med").textContent =
+    summary.risk_level_counts?.Medium ?? 0;
+
+  document.getElementById("kpi-low").textContent =
+    summary.risk_level_counts?.Low ?? 0;
+
+  document.getElementById("kpi-avg").textContent =
+    summary.avg_risk_score ?? "—";
+
+  const classSelect = document.getElementById("f-class");
+  const currentClass = classSelect.value;
+
+  classSelect.innerHTML =
+    '<option value="">All classes</option>' +
+    (summary.predicted_classes || [])
+      .map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`)
+      .join("");
+
+  if ([...classSelect.options].some(o => o.value === currentClass)) {
+    classSelect.value = currentClass;
+  }
+
+  const regionSelect = document.getElementById("f-region");
+  const currentRegion = regionSelect.value;
+
+  regionSelect.innerHTML =
+    '<option value="">All regions</option>' +
+    (summary.regions || [])
+      .map(r => `<option value="${escapeHtml(r)}">${escapeHtml(r)}</option>`)
+      .join("");
+
+  if ([...regionSelect.options].some(o => o.value === currentRegion)) {
+    regionSelect.value = currentRegion;
+  }
+
+  renderClassBars(summary.predicted_class_counts || {});
+}
 
 async function loadSummary() {
-
   try {
-
-    const res = await fetch(`${API}/summary`);
+    const res = await fetch(`${API}/summary`, {
+      cache: "no-store"
+    });
 
     if (!res.ok) {
-      throw new Error("Failed to load summary");
+      throw new Error(`Summary request failed: ${res.status}`);
     }
 
-    const s = await res.json();
-
-    document.getElementById("data-source").textContent =
-      s.source === "real" ? "VIIRS (real)" : "Mock";
-
-    document.getElementById("acc").textContent =
-      s.accuracy
-        ? (s.accuracy * 100).toFixed(1) + "%"
-        : "—";
-
-    document.getElementById("rec-count").textContent =
-      s.n_records;
-
-    document.getElementById("trained-at").textContent =
-      "trained " + fmtTime(s.trained_at);
-
-    document.getElementById("kpi-total").textContent =
-      s.n_records;
-
-    document.getElementById("kpi-high").textContent =
-      s.risk_level_counts.High || 0;
-
-    document.getElementById("kpi-med").textContent =
-      s.risk_level_counts.Medium || 0;
-
-    document.getElementById("kpi-low").textContent =
-      s.risk_level_counts.Low || 0;
-
-    document.getElementById("kpi-avg").textContent =
-      s.avg_risk_score;
-
-    const classSel =
-      document.getElementById("f-class");
-
-    classSel.innerHTML =
-      '<option value="">All classes</option>' +
-      s.predicted_classes
-        .map(c =>
-          `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`
-        )
-        .join("");
-
-    const regionSel =
-      document.getElementById("f-region");
-
-    regionSel.innerHTML =
-      '<option value="">All regions</option>' +
-      s.regions
-        .map(r =>
-          `<option value="${escapeHtml(r)}">${escapeHtml(r)}</option>`
-        )
-        .join("");
-
-    renderClassBars(s.predicted_class_counts);
-
+    const summary = await res.json();
+    updateKpis(summary);
   } catch (error) {
-
     console.error(error);
-
-    document.getElementById("data-source").textContent =
-      "Offline";
-
+    document.getElementById("data-source").textContent = "Offline";
   }
 }
-
-
-/* =========================
-   CLASS BARS
-========================= */
 
 function renderClassBars(counts) {
+  const container = document.getElementById("class-bars");
+  const entries = Object.entries(counts || {})
+    .sort((a, b) => Number(b[1]) - Number(a[1]));
 
-  const max =
-    Math.max(...Object.values(counts), 1);
+  if (!entries.length) {
+    container.innerHTML = '<div class="empty">No classification data</div>';
+    return;
+  }
 
-  const palette = [
-    "#2454d6",
-    "#3f6de0",
-    "#5a83e8",
-    "#7598ed",
-    "#8faef2",
-    "#a9c0f6"
-  ];
+  const max = Math.max(...entries.map(([, count]) => Number(count)), 1);
 
-  const entries =
-    Object.entries(counts)
-      .sort((a, b) => b[1] - a[1]);
-
-  document.getElementById("class-bars").innerHTML =
-    entries.map(([name, count], i) => `
-
-      <div class="bar-row">
-
-        <div
-          class="name"
-          title="${escapeHtml(name)}"
-        >
-          ${escapeHtml(name)}
-        </div>
-
-        <div class="bar-track">
-
-          <div
-            class="bar-fill"
-            style="
-              width:${(count / max * 100).toFixed(0)}%;
-              background:${palette[i % palette.length]}
-            "
-          ></div>
-
-        </div>
-
-        <div class="count">
-          ${count}
-        </div>
-
+  container.innerHTML = entries.map(([name, count]) => `
+    <div class="bar-row">
+      <div class="name" title="${escapeHtml(name)}">${escapeHtml(name)}</div>
+      <div class="bar-track">
+        <div class="bar-fill" style="width:${Math.max(0, Math.min(100, Number(count) / max * 100)).toFixed(0)}%;"></div>
       </div>
-
-    `).join("");
+      <div class="count">${Number(count)}</div>
+    </div>
+  `).join("");
 }
 
-
-/* =========================
-   FILTER QUERY
-========================= */
-
 function buildQuery() {
+  const params = new URLSearchParams();
 
-  const params =
-    new URLSearchParams();
+  const risk = document.getElementById("f-risk").value;
+  const cls = document.getElementById("f-class").value;
+  const region = document.getElementById("f-region").value;
+  const search = document.getElementById("f-search").value.trim();
+  const minScore = document.getElementById("f-score").value;
 
-  const risk =
-    document.getElementById("f-risk").value;
+  if (risk) params.set("risk_level", risk);
+  if (cls) params.set("predicted_class", cls);
+  if (region) params.set("region", region);
+  if (search) params.set("search", search);
+  if (minScore && minScore !== "0") params.set("min_score", minScore);
 
-  const cls =
-    document.getElementById("f-class").value;
-
-  const region =
-    document.getElementById("f-region").value;
-
-  const search =
-    document.getElementById("f-search").value.trim();
-
-  const minScore =
-    document.getElementById("f-score").value;
-
-  if (risk) {
-    params.set("risk_level", risk);
-  }
-
-  if (cls) {
-    params.set("predicted_class", cls);
-  }
-
-  if (region) {
-    params.set("region", region);
-  }
-
-  if (search) {
-    params.set("search", search);
-  }
-
-  if (minScore && minScore !== "0") {
-    params.set("min_score", minScore);
-  }
+  params.set("limit", "5000");
 
   return params.toString();
 }
 
-
-/* =========================
-   RESULTS
-========================= */
-
 async function loadResults() {
-
   try {
-
     const qs = buildQuery();
 
-    const res =
-      await fetch(`${API}/results?${qs}`);
+    const res = await fetch(`${API}/results?${qs}`, {
+      cache: "no-store"
+    });
 
     if (!res.ok) {
-      throw new Error("Failed to load results");
+      throw new Error(`Results request failed: ${res.status}`);
     }
 
-    allData = await res.json();
+    const data = await res.json();
+
+    allData = Array.isArray(data)
+      ? data.filter(row =>
+          isValidCoordinate(
+            Number(row.latitude),
+            Number(row.longitude)
+          )
+        )
+      : [];
 
     renderMap();
     renderTable();
-
   } catch (error) {
-
     console.error(error);
-
     allData = [];
-
     renderMap();
     renderTable();
   }
 }
 
-
-/* =========================
-   MAP MARKERS
-========================= */
-
 function renderMap() {
+  if (!map || !markersLayer) return;
 
   markersLayer.clearLayers();
 
+  const bounds = [];
+
   allData.forEach(row => {
+    const lat = Number(row.latitude);
+    const lon = Number(row.longitude);
+    const score = Math.max(
+      0,
+      Math.min(100, Number(row.risk_score) || 0)
+    );
 
-    if (
-      row.latitude === null ||
-      row.longitude === null
-    ) {
-      return;
-    }
+    if (!isValidCoordinate(lat, lon)) return;
 
-    const color =
-      riskColor[row.risk_level] || "#999";
+    const color = riskColor[row.risk_level] || "#2454d6";
+    const radius = 4 + score / 12;
 
-    const radius =
-      5 + (row.risk_score / 100) * 10;
-
-    const marker =
-      L.circleMarker(
-        [row.latitude, row.longitude],
-        {
-          radius: radius,
-          color: color,
-          weight: 2,
-          fillColor: color,
-          fillOpacity: 0.70
-        }
-      );
+    const marker = L.circleMarker([lat, lon], {
+      radius,
+      color,
+      weight: 1.5,
+      fillColor: color,
+      fillOpacity: 0.72
+    });
 
     marker.bindPopup(`
-
-      <div class="popup-title">
-        🔥 ${escapeHtml(row.hotspot_id)}
+      <div style="min-width:190px">
+        <div class="popup-title">🔥 ${escapeHtml(row.hotspot_id)}</div>
+        <div class="popup-row"><strong>Risk:</strong> ${escapeHtml(row.risk_level)} (${score.toFixed(1)})</div>
+        <div class="popup-row"><strong>Class:</strong> ${escapeHtml(row.predicted_class)}</div>
+        <div class="popup-row"><strong>Region:</strong> ${escapeHtml(row.region)}</div>
+        <div class="popup-row"><strong>FRP:</strong> ${escapeHtml(row.frp_mw)} MW</div>
+        <div class="popup-row"><strong>Persistence:</strong> ${escapeHtml(row.persistence_count)}</div>
+        <div class="popup-row"><strong>Location:</strong> ${lat.toFixed(4)}, ${lon.toFixed(4)}</div>
       </div>
-
-      <div class="popup-row">
-        <strong>Risk:</strong>
-        ${escapeHtml(row.risk_level)}
-        (${escapeHtml(row.risk_score)})
-      </div>
-
-      <div class="popup-row">
-        <strong>Class:</strong>
-        ${escapeHtml(row.predicted_class)}
-      </div>
-
-      <div class="popup-row">
-        <strong>Region:</strong>
-        ${escapeHtml(row.region)}
-      </div>
-
-      <div class="popup-row">
-        <strong>FRP:</strong>
-        ${escapeHtml(row.frp_mw)} MW
-      </div>
-
-      <div class="popup-row">
-        <strong>Persistence:</strong>
-        ${escapeHtml(row.persistence_count)}
-      </div>
-
-      <div class="popup-row">
-        <strong>Location:</strong>
-        ${Number(row.latitude).toFixed(4)},
-        ${Number(row.longitude).toFixed(4)}
-      </div>
-
     `);
 
+    marker.hotspotId = String(row.hotspot_id);
     marker.addTo(markersLayer);
+
+    bounds.push([lat, lon]);
+  });
+
+  if (bounds.length === 1) {
+    map.setView(bounds[0], 8, {
+      animate: false
+    });
+  } else if (bounds.length > 1) {
+    map.fitBounds(bounds, {
+      padding: [35, 35],
+      maxZoom: 7,
+      animate: false
+    });
+  } else {
+    map.fitBounds([
+      [6, 68],
+      [37.5, 98]
+    ], {
+      padding: [20, 20],
+      animate: false
+    });
+  }
+
+  setTimeout(() => map.invalidateSize(), 100);
+}
+
+function renderTable() {
+  const count = document.getElementById("table-count");
+  const body = document.getElementById("table-body");
+
+  count.textContent = allData.length;
+
+  const rows = allData.slice(0, 300);
+
+  body.innerHTML = rows.length
+    ? rows.map(row => `
+        <tr data-hotspot-id="${escapeHtml(row.hotspot_id)}">
+          <td class="id-cell">${escapeHtml(row.hotspot_id)}</td>
+          <td>${escapeHtml(row.predicted_class)}</td>
+          <td>${escapeHtml(row.region)}</td>
+          <td>${escapeHtml(row.risk_score)}</td>
+          <td>
+            <span class="pill ${escapeHtml(row.risk_level)}">
+              ${escapeHtml(row.risk_level)}
+            </span>
+          </td>
+        </tr>
+      `).join("")
+    : `
+        <tr>
+          <td colspan="5" class="empty">No hotspots match the current filters</td>
+        </tr>
+      `;
+
+  body.querySelectorAll("tr[data-hotspot-id]").forEach(row => {
+    row.addEventListener("click", () => {
+      focusHotspot(row.dataset.hotspotId);
+    });
   });
 }
 
-
-/* =========================
-   TABLE
-========================= */
-
-function renderTable() {
-
-  document.getElementById("table-count").textContent =
-    allData.length;
-
-  const rows =
-    allData.slice(0, 300);
-
-  document.getElementById("table-body").innerHTML =
-    rows.length
-
-      ? rows.map(row => `
-
-          <tr onclick="focusHotspot('${escapeHtml(row.hotspot_id)}')">
-
-            <td class="id-cell">
-              ${escapeHtml(row.hotspot_id)}
-            </td>
-
-            <td>
-              ${escapeHtml(row.predicted_class)}
-            </td>
-
-            <td>
-              ${escapeHtml(row.region)}
-            </td>
-
-            <td>
-              ${escapeHtml(row.risk_score)}
-            </td>
-
-            <td>
-              <span class="pill ${escapeHtml(row.risk_level)}">
-                ${escapeHtml(row.risk_level)}
-              </span>
-            </td>
-
-          </tr>
-
-        `).join("")
-
-      : `
-        <tr>
-          <td colspan="5" class="empty">
-            No hotspots match the current filters
-          </td>
-        </tr>
-      `;
-}
-
-
-/* =========================
-   FOCUS HOTSPOT
-========================= */
-
 function focusHotspot(id) {
-
-  const row =
-    allData.find(
-      r => r.hotspot_id === id
-    );
+  const row = allData.find(
+    item => String(item.hotspot_id) === String(id)
+  );
 
   if (!row) return;
 
-  map.setView(
-    [row.latitude, row.longitude],
-    9,
-    { animate: true }
-  );
+  const lat = Number(row.latitude);
+  const lon = Number(row.longitude);
 
-  /*
-    Find the marker and open its popup.
-  */
+  if (!isValidCoordinate(lat, lon)) return;
+
+  map.setView([lat, lon], 9, {
+    animate: true
+  });
+
   markersLayer.eachLayer(marker => {
-
-    const latLng =
-      marker.getLatLng();
-
-    if (
-      Math.abs(latLng.lat - row.latitude) < 0.00001 &&
-      Math.abs(latLng.lng - row.longitude) < 0.00001
-    ) {
-      marker.openPopup();
+    if (marker.hotspotId === String(id)) {
+      setTimeout(() => marker.openPopup(), 250);
     }
-
   });
 }
 
-
-/* =========================
-   DEBOUNCE
-========================= */
-
 function debounce(fn, ms) {
-
-  let t;
+  let timer;
 
   return (...args) => {
-
-    clearTimeout(t);
-
-    t = setTimeout(
-      () => fn(...args),
-      ms
-    );
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), ms);
   };
 }
 
+const reloadResults = debounce(loadResults, 250);
 
-/* =========================
-   EVENTS
-========================= */
+document.getElementById("f-search")
+  .addEventListener("input", reloadResults);
 
-const reload =
-  debounce(loadResults, 250);
+document.getElementById("f-risk")
+  .addEventListener("change", loadResults);
 
-document
-  .getElementById("f-search")
-  .addEventListener("input", reload);
+document.getElementById("f-class")
+  .addEventListener("change", loadResults);
 
-document
-  .getElementById("f-risk")
-  .addEventListener("change", reload);
+document.getElementById("f-region")
+  .addEventListener("change", loadResults);
 
-document
-  .getElementById("f-class")
-  .addEventListener("change", reload);
+document.getElementById("f-score")
+  .addEventListener("input", event => {
+    document.getElementById("f-score-val").textContent =
+      event.target.value;
 
-document
-  .getElementById("f-region")
-  .addEventListener("change", reload);
-
-document
-  .getElementById("f-score")
-  .addEventListener("input", e => {
-
-    document.getElementById(
-      "f-score-val"
-    ).textContent = e.target.value;
-
-    reload();
+    reloadResults();
   });
 
-
-/* =========================
-   RETRAIN
-========================= */
-
-document
-  .getElementById("rerun-btn")
-  .addEventListener("click", async e => {
-
-    const btn = e.target;
+document.getElementById("rerun-btn")
+  .addEventListener("click", async event => {
+    const btn = event.currentTarget;
+    const sampleSize =
+      document.getElementById("sample-size").value;
 
     btn.disabled = true;
     btn.textContent = "Retraining…";
 
     try {
+      const seed = Math.floor(
+        Math.random() * 100000
+      );
 
-      const seed =
-        Math.floor(
-          Math.random() * 100000
-        );
-
-      const sampleSize =
-        document.getElementById(
-          "sample-size"
-        ).value;
-
-      const res =
-        await fetch(
-          `${API}/run?seed=${seed}&sample_size=${sampleSize}`,
-          {
-            method: "POST"
-          }
-        );
+      const res = await fetch(
+        `${API}/run?seed=${seed}&sample_size=${sampleSize}`,
+        {
+          method: "POST",
+          cache: "no-store"
+        }
+      );
 
       if (!res.ok) {
-        throw new Error(
-          "Retraining failed"
-        );
+        let message = "Retraining failed";
+
+        try {
+          const detail = await res.json();
+          message = detail.detail || message;
+        } catch (_) {}
+
+        throw new Error(message);
       }
 
       await loadSummary();
       await loadResults();
-
     } catch (error) {
-
       console.error(error);
-
-      alert(
-        "Retraining failed. Check the backend logs."
-      );
-
+      alert(error.message || "Retraining failed. Check the backend logs.");
     } finally {
-
       btn.disabled = false;
-      btn.textContent =
-        "Retrain on real data";
+      btn.textContent = "Retrain on real data";
     }
-
   });
 
-
-/* =========================
-   START APPLICATION
-========================= */
+window.addEventListener("resize", () => {
+  if (map) {
+    setTimeout(() => map.invalidateSize(), 100);
+  }
+});
 
 (async function start() {
-
   initMap();
-
   await loadSummary();
-
   await loadResults();
-
 })();
-
 </script>
 
 </body>
