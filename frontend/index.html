@@ -819,7 +819,10 @@ function initMap() {
     }
   ).addTo(map);
 
-  map.setView([22.5, 79.0], 5);
+  map.fitBounds([
+  [6.5, 68.0],
+  [35.5, 97.5]
+]);
 
   markersLayer = L.layerGroup().addTo(map);
 
